@@ -12,7 +12,7 @@ app      = Flask(__name__)
 sessions = {}
 
 # ── Ganti ini dengan domain hosting kamu nanti ──────────────
-BASE_URL = "http://localhost:5000"   # ← ubah saat deploy ke: "https://namadomain.up.railway.app"
+BASE_URL = "https://web-production-ca39.up.railway.app"   # ← ubah saat deploy ke: "https://namadomain.up.railway.app"
 
 
 def make_qr(url: str) -> str:
