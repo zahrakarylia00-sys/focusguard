@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>FocusGuard — Deteksi Distraksi Belajar</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#060b14;--surface:#0d1524;--border:#1a2a42;--accent:#38bdf8;--accent2:#818cf8;--green:#34d399;--red:#f87171;--yellow:#fbbf24;--text:#e2e8f0;--muted:#64748b;}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min-height:100vh;overflow-x:hidden;}
+.bg-grid{position:fixed;inset:0;z-index:0;background-image:linear-gradient(rgba(56,189,248,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(56,189,248,.04) 1px,transparent 1px);background-size:48px 48px;}
+.bg-glow{position:fixed;z-index:0;border-radius:50%;filter:blur(120px);pointer-events:none;}
+.glow1{width:500px;height:500px;background:rgba(56,189,248,.08);top:-100px;left:-100px;}
+.glow2{width:400px;height:400px;background:rgba(129,140,248,.07);bottom:0;right:-80px;}
+.page{position:relative;z-index:1;max-width:1100px;margin:0 auto;padding:0 24px;}
+header{display:flex;align-items:center;justify-content:space-between;padding:28px 0;}
+.logo{display:flex;align-items:center;gap:10px;font-family:'Syne',sans-serif;font-size:1.15rem;font-weight:800;}
+.logo-icon{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;font-size:1rem;}
+.badge{padding:4px 12px;border-radius:99px;border:1px solid var(--border);font-size:.72rem;color:var(--muted);letter-spacing:.05em;text-transform:uppercase;}
+.hero{display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center;padding:60px 0 60px;}
+@media(max-width:720px){.hero{grid-template-columns:1fr;gap:36px;padding:36px 0;}}
+.hero-label{display:inline-flex;align-items:center;gap:8px;font-size:.75rem;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);margin-bottom:20px;}
+.hero-label span{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:pulse 2s infinite;}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.7)}}
+h1{font-family:'Syne',sans-serif;font-size:clamp(2rem,5vw,3.2rem);font-weight:800;line-height:1.1;letter-spacing:-.04em;margin-bottom:18px;}
+h1 em{font-style:normal;color:var(--accent);}
+.hero-desc{font-size:.95rem;color:var(--muted);line-height:1.7;margin-bottom:32px;max-width:420px;}
+.btn-primary{display:inline-flex;align-items:center;gap:10px;padding:16px 32px;border-radius:14px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#060b14;font-family:'Syne',sans-serif;font-weight:700;font-size:1rem;border:none;cursor:pointer;text-decoration:none;transition:transform .2s,box-shadow .2s;box-shadow:0 0 32px rgba(56,189,248,.25);}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 0 48px rgba(56,189,248,.4);}
+.btn-secondary{display:inline-flex;align-items:center;gap:8px;padding:14px 24px;border-radius:14px;border:1px solid var(--border);background:transparent;color:var(--text);font-size:.9rem;cursor:pointer;text-decoration:none;transition:border-color .2s,background .2s;}
+.btn-secondary:hover{border-color:var(--accent);background:rgba(56,189,248,.05);}
+.hero-cta{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+.stats{display:flex;gap:32px;margin-top:40px;flex-wrap:wrap;}
+.stat-num{font-family:'Syne',sans-serif;font-size:1.5rem;font-weight:800;color:var(--accent);}
+.stat-label{font-size:.75rem;color:var(--muted);}
+.qr-card{background:var(--surface);border:1px solid var(--border);border-radius:24px;padding:28px;text-align:center;position:relative;overflow:hidden;}
+.qr-card::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(56,189,248,.05),rgba(129,140,248,.05));pointer-events:none;}
+.qr-card h3{font-family:'Syne',sans-serif;font-size:1rem;font-weight:700;margin-bottom:6px;}
+.qr-card p{font-size:.8rem;color:var(--muted);margin-bottom:18px;}
+.qr-img-wrap{display:inline-block;padding:12px;background:white;border-radius:16px;box-shadow:0 0 40px rgba(56,189,248,.2);}
+.qr-img-wrap img{display:block;width:150px;height:150px;}
+.qr-url{margin-top:14px;padding:9px 14px;background:var(--bg);border:1px solid var(--border);border-radius:10px;font-size:.72rem;color:var(--accent);word-break:break-all;font-family:monospace;}
+.qr-hint{font-size:.7rem;color:var(--muted);margin-top:10px;}
+.features{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;padding:0 0 70px;}
+@media(max-width:720px){.features{grid-template-columns:1fr;}}
+.feature-card{background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:22px;transition:border-color .2s,transform .2s;}
+.feature-card:hover{border-color:var(--accent);transform:translateY(-3px);}
+.feat-icon{width:42px;height:42px;border-radius:12px;background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.2);display:flex;align-items:center;justify-content:center;font-size:1.1rem;margin-bottom:12px;}
+.feature-card h4{font-family:'Syne',sans-serif;font-size:.9rem;font-weight:700;margin-bottom:6px;}
+.feature-card p{font-size:.8rem;color:var(--muted);line-height:1.6;}
+.section-title{font-family:'Syne',sans-serif;font-size:1.4rem;font-weight:800;margin-bottom:18px;letter-spacing:-.03em;}
+.divider{border:none;border-top:1px solid var(--border);margin:0 0 44px;}
+footer{border-top:1px solid var(--border);padding:22px 0;text-align:center;font-size:.78rem;color:var(--muted);}
+.fade-up{opacity:0;transform:translateY(24px);animation:fadeUp .6s ease forwards;}
+@keyframes fadeUp{to{opacity:1;transform:translateY(0);}}
+.d1{animation-delay:.1s}.d2{animation-delay:.2s}.d3{animation-delay:.3s}.d4{animation-delay:.4s}
+</style>
+</head>
+<body>
+<div class="bg-grid"></div>
+<div class="bg-glow glow1"></div>
+<div class="bg-glow glow2"></div>
+<div class="page">
+  <header class="fade-up">
+    <div class="logo"><div class="logo-icon">👁</div>FocusGuard</div>
+    <div class="badge">Machine Learning</div>
+  </header>
+  <section class="hero">
+    <div class="fade-up d1">
+      <div class="hero-label"><span></span>Deteksi Real-time</div>
+      <h1>Jaga Fokus<br>Belajarmu dengan <em>AI</em></h1>
+      <p class="hero-desc">Aplikasi berbasis Machine Learning yang mendeteksi distraksi belajar secara real-time menggunakan kamera. Peringatan otomatis saat tidak fokus.</p>
+      <div class="hero-cta">
+        <a href="/detect" class="btn-primary"><span>▶</span>Mulai Deteksi</a>
+        <a href="#cara-kerja" class="btn-secondary">Cara Kerja</a>
+      </div>
+      <div class="stats">
+        <div><div class="stat-num">3s</div><div class="stat-label">Deteksi Distraksi</div></div>
+        <div><div class="stat-num">468</div><div class="stat-label">Landmark Wajah</div></div>
+        <div><div class="stat-num">30fps</div><div class="stat-label">Kecepatan Analisis</div></div>
+      </div>
+    </div>
+    <div class="qr-card fade-up d2">
+      <h3>📱 Akses dari HP</h3>
+      <p>Scan QR Code atau buka link di bawah</p>
+      <div class="qr-img-wrap"><img src="data:image/png;base64,{{ qr_data }}" alt="QR"></div>
+      <div class="qr-url">{{ app_url }}</div>
+      <p class="qr-hint">Pastikan HP dan PC terhubung ke WiFi yang sama</p>
+    </div>
+  </section>
+  <hr class="divider">
+  <div id="cara-kerja">
+    <p class="section-title fade-up">Cara Kerja Deteksi</p>
+    <div class="features">
+      <div class="feature-card fade-up d1"><div class="feat-icon">👁️</div><h4>Eye Aspect Ratio</h4><p>Mendeteksi mata tertutup lebih dari 3 detik menggunakan 6 titik landmark mata presisi tinggi.</p></div>
+      <div class="feature-card fade-up d2"><div class="feat-icon">🧭</div><h4>Head Pose Estimation</h4><p>Mengukur sudut kepala (yaw & pitch) untuk mendeteksi apakah menoleh atau menunduk.</p></div>
+      <div class="feature-card fade-up d3"><div class="feat-icon">🔔</div><h4>Peringatan Otomatis</h4><p>Notifikasi visual berkedip merah dan suara peringatan langsung muncul saat distraksi terdeteksi.</p></div>
+      <div class="feature-card fade-up d1"><div class="feat-icon">🤖</div><h4>MediaPipe AI</h4><p>Menggunakan Face Mesh dari Google MediaPipe dengan 468 titik landmark wajah yang akurat.</p></div>
+      <div class="feature-card fade-up d2"><div class="feat-icon">📊</div><h4>Laporan Sesi</h4><p>Setiap sesi menghasilkan laporan: % fokus, % distraksi, durasi, dan jumlah peringatan.</p></div>
+      <div class="feature-card fade-up d3"><div class="feat-icon">🔗</div><h4>QR Code Hasil</h4><p>Hasil sesi dibuatkan QR Code unik yang bisa dibagikan ke siapapun.</p></div>
+    </div>
+  </div>
+</div>
+<footer><div class="page">FocusGuard — Deteksi Distraksi Belajar Berbasis Machine Learning</div></footer>
+</body>
+</html>

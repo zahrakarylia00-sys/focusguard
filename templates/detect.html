@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>FocusGuard — Deteksi</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+
+<!-- MediaPipe Face Mesh WASM (jalan di browser, akurasi tinggi) -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+
+<style>
+:root{--bg:#060b14;--surface:#0d1524;--border:#1a2a42;--accent:#38bdf8;--accent2:#818cf8;--green:#34d399;--red:#f87171;--yellow:#fbbf24;--text:#e2e8f0;--muted:#64748b;}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;min-height:100vh;overflow:hidden;}
+.app{display:grid;grid-template-columns:1fr 310px;height:100vh;}
+@media(max-width:768px){.app{grid-template-columns:1fr;grid-template-rows:55vh 1fr;}}
+
+/* Camera */
+.cam-area{position:relative;background:#000;overflow:hidden;}
+#video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1);}
+#meshCanvas{position:absolute;inset:0;width:100%;height:100%;transform:scaleX(-1);pointer-events:none;z-index:3;}
+
+/* Loading */
+.loading-screen{position:absolute;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;z-index:10;transition:opacity .6s;}
+.loading-screen.hidden{opacity:0;pointer-events:none;}
+.spinner{width:48px;height:48px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.loading-text{font-family:'Syne',sans-serif;font-size:1rem;font-weight:700;color:var(--accent);}
+.loading-sub{font-size:.8rem;color:var(--muted);text-align:center;padding:0 24px;}
+.loading-bar{width:200px;height:4px;background:var(--border);border-radius:99px;overflow:hidden;}
+.loading-bar-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:99px;width:0%;transition:width .4s;}
+
+/* HUD */
+.hud-status{position:absolute;top:14px;left:50%;transform:translateX(-50%);padding:7px 22px;border-radius:99px;font-family:'Syne',sans-serif;font-size:.82rem;font-weight:700;backdrop-filter:blur(12px);border:1px solid;transition:all .3s;white-space:nowrap;z-index:5;}
+.hud-status.focused{background:rgba(52,211,153,.15);border-color:var(--green);color:var(--green);}
+.hud-status.distracted{background:rgba(248,113,113,.15);border-color:var(--red);color:var(--red);}
+.hud-status.no-face{background:rgba(251,191,36,.15);border-color:var(--yellow);color:var(--yellow);}
+.hud-status.loading{background:rgba(56,189,248,.15);border-color:var(--accent);color:var(--accent);}
+
+/* Alert overlay */
+.alert-overlay{position:absolute;inset:0;pointer-events:none;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .15s;z-index:6;}
+.alert-overlay.active{opacity:1;}
+.alert-overlay::before{content:'';position:absolute;inset:0;border:6px solid var(--red);animation:bPulse .8s infinite;}
+@keyframes bPulse{0%,100%{opacity:1;box-shadow:inset 0 0 40px rgba(248,113,113,.3);}50%{opacity:.2;}}
+.alert-text{font-family:'Syne',sans-serif;font-size:clamp(1.6rem,4vw,2.8rem);font-weight:800;color:var(--red);text-shadow:0 0 40px rgba(248,113,113,.9);animation:tPulse .8s infinite;background:rgba(6,11,20,.7);padding:10px 28px;border-radius:14px;border:1px solid rgba(248,113,113,.4);}
+@keyframes tPulse{0%,100%{transform:scale(1);}50%{transform:scale(1.06);}}
+
+/* Sidebar */
+.sidebar{background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto;padding:14px;gap:10px;}
+.sidebar-logo{display:flex;align-items:center;gap:9px;font-family:'Syne',sans-serif;font-weight:800;font-size:.95rem;}
+.logo-icon{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;font-size:.8rem;}
+.card{background:var(--bg);border:1px solid var(--border);border-radius:14px;padding:12px;}
+.card-title{font-family:'Syne',sans-serif;font-size:.68rem;font-weight:700;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin-bottom:9px;}
+.gauge-wrap{display:flex;align-items:center;gap:12px;}
+.gauge-circle{position:relative;width:64px;height:64px;flex-shrink:0;}
+.gauge-circle svg{transform:rotate(-90deg);}
+.gc-bg{fill:none;stroke:var(--border);stroke-width:6;}
+.gc-fill{fill:none;stroke-width:6;stroke-linecap:round;transition:stroke-dashoffset .4s,stroke .4s;}
+.gauge-num{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:'Syne',sans-serif;font-size:.95rem;font-weight:800;}
+.gauge-info h3{font-family:'Syne',sans-serif;font-size:1.1rem;font-weight:800;line-height:1;}
+.gauge-info p{font-size:.7rem;color:var(--muted);margin-top:3px;}
+.timer-display{font-family:'Syne',sans-serif;font-size:1.9rem;font-weight:800;text-align:center;letter-spacing:-.04em;color:var(--accent);}
+.reason-chip{padding:6px 12px;border-radius:99px;font-size:.73rem;font-weight:500;text-align:center;transition:all .3s;border:1px solid var(--border);color:var(--muted);}
+.reason-chip.focused{border-color:var(--green);color:var(--green);background:rgba(52,211,153,.08);}
+.reason-chip.distracted{border-color:var(--red);color:var(--red);background:rgba(248,113,113,.08);}
+.reason-chip.no-face{border-color:var(--yellow);color:var(--yellow);background:rgba(251,191,36,.08);}
+.metrics{display:grid;grid-template-columns:1fr 1fr;gap:7px;}
+.metric{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px;}
+.metric-val{font-family:'Syne',sans-serif;font-size:1.05rem;font-weight:800;line-height:1;}
+.metric-label{font-size:.65rem;color:var(--muted);margin-top:3px;}
+.prog-bar{background:var(--border);border-radius:99px;height:4px;overflow:hidden;margin-top:4px;}
+.prog-fill{height:100%;border-radius:99px;transition:width .4s;}
+.mini-graph{height:42px;}
+#graphCanvas{width:100%;height:100%;}
+.alert-log{max-height:68px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;}
+.alert-item{font-size:.67rem;color:var(--muted);padding:3px 7px;border-radius:5px;border-left:2px solid var(--red);background:rgba(248,113,113,.05);}
+.alert-empty{font-size:.7rem;color:var(--muted);text-align:center;padding:6px;}
+.btn-stop{width:100%;padding:12px;border-radius:12px;background:linear-gradient(135deg,#f87171,#fb923c);border:none;color:white;font-family:'Syne',sans-serif;font-weight:700;font-size:.88rem;cursor:pointer;transition:transform .2s,box-shadow .2s;box-shadow:0 0 20px rgba(248,113,113,.2);}
+.btn-stop:hover{transform:translateY(-2px);}
+.btn-stop:disabled{opacity:.6;transform:none;}
+.btn-back{width:100%;padding:8px;border-radius:10px;background:transparent;border:1px solid var(--border);color:var(--muted);font-size:.78rem;cursor:pointer;text-decoration:none;display:block;text-align:center;transition:border-color .2s,color .2s;}
+.btn-back:hover{border-color:var(--accent);color:var(--accent);}
+@media(max-width:768px){.sidebar{border-left:none;border-top:1px solid var(--border);}}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Camera -->
+  <div class="cam-area">
+    <div class="loading-screen" id="loadingScreen">
+      <div class="spinner"></div>
+      <div class="loading-text" id="loadingText">Memuat MediaPipe...</div>
+      <div class="loading-sub">Model AI sedang diinisialisasi di browser kamu</div>
+      <div class="loading-bar"><div class="loading-bar-fill" id="loadingBar"></div></div>
+    </div>
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="meshCanvas"></canvas>
+    <div class="hud-status loading" id="hudStatus">⏳ Memuat...</div>
+    <div class="alert-overlay" id="alertOverlay"><div class="alert-text">⚠ FOKUS!</div></div>
+  </div>
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-logo"><div class="logo-icon">👁</div>FocusGuard</div>
+
+    <div class="card">
+      <div class="card-title">Skor Fokus</div>
+      <div class="gauge-wrap">
+        <div class="gauge-circle">
+          <svg viewBox="0 0 64 64" width="64" height="64">
+            <circle class="gc-bg" cx="32" cy="32" r="26"/>
+            <circle class="gc-fill" id="gaugeFill" cx="32" cy="32" r="26"
+              stroke="#38bdf8" stroke-dasharray="163.4" stroke-dashoffset="163.4"/>
+          </svg>
+          <div class="gauge-num" id="gaugeNum">0</div>
+        </div>
+        <div class="gauge-info">
+          <h3 id="gaugeLabel">—</h3>
+          <p id="gaugeReason">Menunggu...</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Durasi Sesi</div>
+      <div class="timer-display" id="timerDisplay">00:00</div>
+    </div>
+
+    <div class="reason-chip" id="reasonChip">—</div>
+
+    <div class="metrics">
+      <div class="metric">
+        <div class="metric-val" id="metFokus" style="color:var(--green)">0%</div>
+        <div class="metric-label">Fokus</div>
+        <div class="prog-bar"><div class="prog-fill" id="pbFokus" style="width:0%;background:var(--green)"></div></div>
+      </div>
+      <div class="metric">
+        <div class="metric-val" id="metDistrak" style="color:var(--red)">0%</div>
+        <div class="metric-label">Distraksi</div>
+        <div class="prog-bar"><div class="prog-fill" id="pbDistrak" style="width:0%;background:var(--red)"></div></div>
+      </div>
+      <div class="metric">
+        <div class="metric-val" id="metAlert" style="color:var(--yellow)">0</div>
+        <div class="metric-label">Alert</div>
+      </div>
+      <div class="metric">
+        <div class="metric-val" id="metFPS" style="color:var(--accent)">—</div>
+        <div class="metric-label">FPS</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Riwayat Fokus</div>
+      <div class="mini-graph"><canvas id="graphCanvas"></canvas></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Log Alert</div>
+      <div class="alert-log" id="alertLog"><div class="alert-empty">Belum ada alert</div></div>
+    </div>
+
+    <button class="btn-stop" id="btnStop">⏹ Akhiri Sesi</button>
+    <a href="/" class="btn-back">← Beranda</a>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════
+//  STATE
+// ══════════════════════════════════════════════════
+const S = {
+  running: false,
+  frames: 0, focusF: 0, distractF: 0, nofaceF: 0,
+  alerts: 0, alertLog: [], sessionStart: null,
+  focusHistory: [], alertTO: null,
+  fpsArr: [], lastFrameTime: performance.now(),
+  statusStart: {}, lastAlertTime: 0,
+  earHistory: [], yawHistory: [], pitchHistory: [],
+};
+
+const CFG = {
+  EAR_THR: 0.22, YAW_THR: 25, PITCH_THR: 20,
+  DISTRACT_SEC: 3, NOFACE_SEC: 2, ALERT_CD: 5,
+};
+
+// ══════════════════════════════════════════════════
+//  DOM
+// ══════════════════════════════════════════════════
+const video         = document.getElementById('video');
+const meshCanvas    = document.getElementById('meshCanvas');
+const mCtx          = meshCanvas.getContext('2d');
+const loadingScreen = document.getElementById('loadingScreen');
+const loadingText   = document.getElementById('loadingText');
+const loadingBar    = document.getElementById('loadingBar');
+const hudStatus     = document.getElementById('hudStatus');
+const alertOverlay  = document.getElementById('alertOverlay');
+const gaugeNum      = document.getElementById('gaugeNum');
+const gaugeLabel    = document.getElementById('gaugeLabel');
+const gaugeReason   = document.getElementById('gaugeReason');
+const gaugeFill     = document.getElementById('gaugeFill');
+const reasonChip    = document.getElementById('reasonChip');
+const timerDisplay  = document.getElementById('timerDisplay');
+const metFokus      = document.getElementById('metFokus');
+const metDistrak    = document.getElementById('metDistrak');
+const metAlert      = document.getElementById('metAlert');
+const metFPS        = document.getElementById('metFPS');
+const pbFokus       = document.getElementById('pbFokus');
+const pbDistrak     = document.getElementById('pbDistrak');
+const alertLog      = document.getElementById('alertLog');
+const graphCanvas   = document.getElementById('graphCanvas');
+const gCtx          = graphCanvas.getContext('2d');
+const btnStop       = document.getElementById('btnStop');
+
+// ══════════════════════════════════════════════════
+//  BEEP SERAM (sawtooth + square + nada turun)
+// ══════════════════════════════════════════════════
+let audioCtx = null;
+
+function beepTone(freq, dur, vol=0.8, type='sawtooth') {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc  = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    const osc2 = audioCtx.createOscillator();
+    const gain2= audioCtx.createGain();
+    osc.connect(gain);    gain.connect(audioCtx.destination);
+    osc2.connect(gain2);  gain2.connect(audioCtx.destination);
+    osc.type  = type;
+    osc2.type = 'square';
+    osc.frequency.value  = freq;
+    osc2.frequency.value = freq * 0.5; // sub-harmonik rendah
+    gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+    gain2.gain.setValueAtTime(vol * 0.3, audioCtx.currentTime);
+    gain2.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+    osc.start();  osc.stop(audioCtx.currentTime + dur);
+    osc2.start(); osc2.stop(audioCtx.currentTime + dur);
+  } catch(e) {}
+}
+
+function playAlert() {
+  // Pola nada turun — terdengar seram & mendesak
+  beepTone(700, 0.18, 1.0, 'sawtooth');
+  setTimeout(() => beepTone(580, 0.18, 1.0, 'sawtooth'), 200);
+  setTimeout(() => beepTone(460, 0.18, 1.0, 'sawtooth'), 400);
+  setTimeout(() => beepTone(340, 0.35, 1.0, 'square'),   600);  // nada rendah
+  setTimeout(() => beepTone(220, 0.4,  1.0, 'square'),   980);  // paling rendah
+}
+
+// ══════════════════════════════════════════════════
+//  ALERT UI
+// ══════════════════════════════════════════════════
+function triggerAlert(reason) {
+  S.alerts++; metAlert.textContent = S.alerts;
+  alertOverlay.classList.add('active');
+  clearTimeout(S.alertTO);
+  S.alertTO = setTimeout(() => alertOverlay.classList.remove('active'), 3500);
+  playAlert();
+  const t = new Date().toLocaleTimeString('id-ID', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  S.alertLog.push(`${t} — ${reason}`);
+  renderLog();
+}
+
+function renderLog() {
+  if (!S.alertLog.length) { alertLog.innerHTML = '<div class="alert-empty">Belum ada alert</div>'; return; }
+  alertLog.innerHTML = [...S.alertLog].reverse().slice(0,5)
+    .map(a => `<div class="alert-item">${a}</div>`).join('');
+}
+
+// ══════════════════════════════════════════════════
+//  UPDATE UI
+// ══════════════════════════════════════════════════
+function updateUI(status, reason, score) {
+  const cls = status.toLowerCase().replace('_','-');
+  hudStatus.className = 'hud-status ' + cls;
+  hudStatus.textContent = {FOCUSED:'✅ Fokus',DISTRACTED:'⚠ Distraksi',NO_FACE:'❌ Wajah Tidak Terdeteksi'}[status] || status;
+  const circ = 163.4, offset = circ - (score/100)*circ;
+  gaugeFill.style.strokeDashoffset = offset;
+  const col = score>=70?'#34d399':score>=40?'#fbbf24':'#f87171';
+  gaugeFill.style.stroke = col; gaugeNum.style.color = col;
+  gaugeNum.textContent = Math.round(score);
+  gaugeLabel.textContent = status==='FOCUSED'?'Fokus':status==='DISTRACTED'?'Distraksi':'No Wajah';
+  gaugeReason.textContent = reason;
+  reasonChip.textContent = reason; reasonChip.className = 'reason-chip '+cls;
+  const total = Math.max(S.frames,1);
+  const fp = (S.focusF/total*100).toFixed(1), dp = (S.distractF/total*100).toFixed(1);
+  metFokus.textContent=fp+'%'; metDistrak.textContent=dp+'%';
+  pbFokus.style.width=fp+'%'; pbDistrak.style.width=dp+'%';
+}
+
+// ══════════════════════════════════════════════════
+//  MINI GRAPH
+// ══════════════════════════════════════════════════
+function drawGraph() {
+  const W=graphCanvas.offsetWidth, H=graphCanvas.offsetHeight;
+  graphCanvas.width=W; graphCanvas.height=H; gCtx.clearRect(0,0,W,H);
+  const hist=S.focusHistory.slice(-80); if(hist.length<2) return;
+  [25,50,75].forEach(l=>{
+    const y=H-(l/100)*H;
+    gCtx.strokeStyle='rgba(255,255,255,.06)';gCtx.lineWidth=1;
+    gCtx.beginPath();gCtx.moveTo(0,y);gCtx.lineTo(W,y);gCtx.stroke();
+  });
+  gCtx.beginPath();
+  hist.forEach((v,i)=>{const x=(i/(hist.length-1))*W,y=H-(v/100)*H;i===0?gCtx.moveTo(x,y):gCtx.lineTo(x,y);});
+  const last=hist[hist.length-1];
+  gCtx.strokeStyle=last>=70?'#34d399':last>=40?'#fbbf24':'#f87171';
+  gCtx.lineWidth=2; gCtx.stroke();
+}
+
+// ══════════════════════════════════════════════════
+//  FACE MESH DRAW (jaringan wajah)
+// ══════════════════════════════════════════════════
+function drawFaceMesh(landmarks, status) {
+  const W = meshCanvas.offsetWidth;
+  const H = meshCanvas.offsetHeight;
+  meshCanvas.width  = W;
+  meshCanvas.height = H;
+  mCtx.clearRect(0, 0, W, H);
+
+  if (!landmarks || landmarks.length === 0) return;
+
+  const col     = status==='FOCUSED'?'rgba(52,211,153,.55)':status==='DISTRACTED'?'rgba(248,113,113,.55)':'rgba(251,191,36,.55)';
+  const dotCol  = status==='FOCUSED'?'rgba(52,211,153,.9)' :status==='DISTRACTED'?'rgba(248,113,113,.9)' :'rgba(251,191,36,.9)';
+  const lineW   = status==='DISTRACTED' ? 1.2 : 0.7;
+
+  // Gambar koneksi FACEMESH_TESSELATION (dari MediaPipe)
+  mCtx.strokeStyle = col;
+  mCtx.lineWidth   = lineW;
+
+  FACE_CONNECTIONS.forEach(([i, j]) => {
+    if (i >= landmarks.length || j >= landmarks.length) return;
+    const a = landmarks[i], b = landmarks[j];
+    mCtx.beginPath();
+    mCtx.moveTo(a.x * W, a.y * H);
+    mCtx.lineTo(b.x * W, b.y * H);
+    mCtx.stroke();
+  });
+
+  // Titik landmark
+  mCtx.fillStyle = dotCol;
+  landmarks.forEach(lm => {
+    mCtx.beginPath();
+    mCtx.arc(lm.x * W, lm.y * H, 1.2, 0, Math.PI*2);
+    mCtx.fill();
+  });
+}
+
+// MediaPipe face mesh koneksi (subset penting)
+const FACE_CONNECTIONS = [
+  // Kontur wajah
+  [10,338],[338,297],[297,332],[332,284],[284,251],[251,389],[389,356],[356,454],[454,323],[323,361],[361,288],[288,397],[397,365],[365,379],[379,378],[378,400],[400,377],[377,152],[152,148],[148,176],[176,149],[149,150],[150,136],[136,172],[172,58],[58,132],[132,93],[93,234],[234,127],[127,162],[162,21],[21,54],[54,103],[103,67],[67,109],[109,10],
+  // Mata kiri
+  [362,382],[382,381],[381,380],[380,374],[374,373],[373,390],[390,249],[249,263],[263,466],[466,388],[388,387],[387,386],[386,385],[385,384],[384,398],[398,362],
+  // Mata kanan
+  [33,7],[7,163],[163,144],[144,145],[145,153],[153,154],[154,155],[155,133],[133,173],[173,157],[157,158],[158,159],[159,160],[160,161],[161,246],[246,33],
+  // Alis kiri
+  [336,296],[296,334],[334,293],[293,300],[300,276],[276,283],[283,282],[282,295],[295,285],
+  // Alis kanan
+  [107,66],[66,105],[105,63],[63,70],[70,46],[46,53],[53,52],[52,65],[65,55],
+  // Hidung
+  [168,6],[6,197],[197,195],[195,5],[5,4],[4,1],[1,19],[19,94],[94,2],[2,164],[164,0],
+  // Mulut luar
+  [61,146],[146,91],[91,181],[181,84],[84,17],[17,314],[314,405],[405,321],[321,375],[375,291],[291,409],[409,270],[270,269],[269,267],[267,0],[0,37],[37,39],[39,40],[40,185],[185,61],
+  // Mulut dalam
+  [78,95],[95,88],[88,178],[178,87],[87,14],[14,317],[317,402],[402,318],[318,324],[324,308],[308,415],[415,310],[310,311],[311,312],[312,13],[13,82],[82,81],[81,80],[80,191],[191,78],
+];
+
+// ══════════════════════════════════════════════════
+//  EAR & HEAD POSE (di browser)
+// ══════════════════════════════════════════════════
+const L_EAR = [362,385,387,263,373,380];
+const R_EAR = [33,160,158,133,153,144];
+
+function eucl(a,b){return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2);}
+function calcEAR(lms){
+  function ear(idx){
+    const p=idx.map(i=>lms[i]);
+    return (eucl(p[1],p[5])+eucl(p[2],p[4]))/(2*Math.max(eucl(p[0],p[3]),1e-6));
+  }
+  return (ear(L_EAR)+ear(R_EAR))/2;
+}
+
+function calcHeadPose(lms){
+  const nose=lms[1], chin=lms[152], lEye=lms[33], rEye=lms[263];
+  const forehead=lms[10];
+  const eyeCX=(lEye.x+rEye.x)/2, eyeCY=(lEye.y+rEye.y)/2;
+  const eyeDist=eucl(lEye,rEye);
+  const yaw  =((nose.x-eyeCX)/Math.max(eyeDist,0.01))*90;
+  const faceH=eucl(forehead,chin);
+  const noseH=eucl(forehead,nose);
+  const pitch=((noseH/Math.max(faceH,0.01))-0.5)*60;
+  return {yaw,pitch};
+}
+
+function smooth(arr,val,maxLen=8){arr.push(val);if(arr.length>maxLen)arr.shift();return arr.reduce((a,b)=>a+b,0)/arr.length;}
+
+// ══════════════════════════════════════════════════
+//  TIMER
+// ══════════════════════════════════════════════════
+setInterval(()=>{
+  if(!S.running||!S.sessionStart)return;
+  const e=Math.floor((Date.now()-S.sessionStart)/1000);
+  timerDisplay.textContent=`${Math.floor(e/60).toString().padStart(2,'0')}:${(e%60).toString().padStart(2,'0')}`;
+},1000);
+
+// ══════════════════════════════════════════════════
+//  MEDIAPIPE CALLBACK
+// ══════════════════════════════════════════════════
+function onResults(results) {
+  if (!S.running) return;
+  S.frames++;
+
+  // FPS
+  const now = performance.now();
+  S.fpsArr.push(1000/Math.max(now-S.lastFrameTime,1));
+  S.lastFrameTime = now;
+  if(S.fpsArr.length>10)S.fpsArr.shift();
+  metFPS.textContent = Math.round(S.fpsArr.reduce((a,b)=>a+b,0)/S.fpsArr.length);
+
+  const nowSec = Date.now()/1000;
+  const lms    = results.multiFaceLandmarks?.[0];
+
+  if (!lms) {
+    // No face
+    S.nofaceF++;
+    drawFaceMesh([], 'NO_FACE');
+    S.statusStart.NO_FACE = S.statusStart.NO_FACE || nowSec;
+    const elapsed = nowSec - S.statusStart.NO_FACE;
+    if (elapsed >= CFG.NOFACE_SEC && nowSec - S.lastAlertTime >= CFG.ALERT_CD) {
+      S.lastAlertTime = nowSec;
+      triggerAlert('Wajah tidak terdeteksi');
+    }
+    S.focusHistory.push(0);
+    updateUI('NO_FACE','Wajah tidak terdeteksi',0);
+    drawGraph(); return;
+  }
+
+  // Reset no-face timer
+  delete S.statusStart.NO_FACE;
+
+  // EAR
+  const ear     = calcEAR(lms);
+  const avgEAR  = smooth(S.earHistory, ear);
+
+  // Head pose
+  const {yaw,pitch} = calcHeadPose(lms);
+  const avgYaw      = smooth(S.yawHistory, yaw);
+  const avgPitch    = smooth(S.pitchHistory, pitch);
+
+  const eyesClosed  = avgEAR < CFG.EAR_THR;
+  const lookingAway = Math.abs(avgYaw)>CFG.YAW_THR || Math.abs(avgPitch)>CFG.PITCH_THR;
+
+  let status, reason, score;
+  if (eyesClosed) {
+    status='DISTRACTED'; reason=`Mata tertutup (EAR=${avgEAR.toFixed(2)})`;
+    score=Math.max(0,Math.round(avgEAR/CFG.EAR_THR*60));
+  } else if (lookingAway) {
+    const dirs=[];
+    if(avgYaw>CFG.YAW_THR) dirs.push('Kanan');
+    else if(avgYaw<-CFG.YAW_THR) dirs.push('Kiri');
+    if(avgPitch>CFG.PITCH_THR) dirs.push('Bawah');
+    else if(avgPitch<-CFG.PITCH_THR) dirs.push('Atas');
+    status='DISTRACTED'; reason=`Kepala ${dirs.join(' & ')||'menyimpang'}`;
+    const yf=Math.max(0,1-Math.abs(avgYaw)/CFG.YAW_THR);
+    const pf=Math.max(0,1-Math.abs(avgPitch)/CFG.PITCH_THR);
+    score=Math.round(Math.min(yf,pf)*70);
+  } else {
+    status='FOCUSED'; reason='Fokus Belajar';
+    const yf=Math.max(0,1-Math.abs(avgYaw)/CFG.YAW_THR);
+    const pf=Math.max(0,1-Math.abs(avgPitch)/CFG.PITCH_THR);
+    const ef=Math.min(1,avgEAR/0.35);
+    score=Math.round(((yf+pf+ef)/3)*100);
+  }
+
+  // Update stats
+  if (status==='FOCUSED') { S.focusF++; S.statusStart={}; }
+  else {
+    S.distractF++;
+    S.statusStart[status] = S.statusStart[status] || nowSec;
+    const elapsed = nowSec - S.statusStart[status];
+    if (elapsed >= CFG.DISTRACT_SEC && nowSec - S.lastAlertTime >= CFG.ALERT_CD) {
+      S.lastAlertTime = nowSec;
+      triggerAlert(reason);
+    }
+  }
+
+  S.focusHistory.push(score);
+  if (S.focusHistory.length > 120) S.focusHistory.shift();
+
+  // Gambar mesh wajah
+  drawFaceMesh(lms, status);
+  updateUI(status, reason, score);
+  drawGraph();
+}
+
+// ══════════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════════
+async function init() {
+  try {
+    loadingBar.style.width = '20%';
+    loadingText.textContent = 'Meminta akses kamera...';
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video:{width:640,height:480,facingMode:'user'}, audio:false
+    });
+    video.srcObject = stream;
+    await new Promise(r => video.onloadedmetadata = r);
+
+    loadingBar.style.width = '50%';
+    loadingText.textContent = 'Memuat MediaPipe Face Mesh...';
+
+    // Init MediaPipe Face Mesh
+    const faceMesh = new FaceMesh({locateFile: f =>
+      `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
+    });
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: true,
+      minDetectionConfidence: 0.6,
+      minTrackingConfidence: 0.6,
+    });
+    faceMesh.onResults(onResults);
+
+    loadingBar.style.width = '80%';
+    loadingText.textContent = 'Menghubungkan kamera...';
+
+    // Camera utility MediaPipe
+    const camera = new Camera(video, {
+      onFrame: async () => { await faceMesh.send({image: video}); },
+      width: 640, height: 480,
+    });
+    await camera.start();
+
+    loadingBar.style.width = '100%';
+    loadingText.textContent = 'Siap!';
+    setTimeout(() => loadingScreen.classList.add('hidden'), 500);
+
+    S.running = true;
+    S.sessionStart = Date.now();
+    hudStatus.className  = 'hud-status focused';
+    hudStatus.textContent = '✅ Fokus';
+
+  } catch(e) {
+    loadingText.textContent = 'Gagal memuat!';
+    document.querySelector('.loading-sub').textContent =
+      'Izinkan akses kamera di browser. ' + e.message;
+  }
+}
+
+// ══════════════════════════════════════════════════
+//  STOP SESSION
+// ══════════════════════════════════════════════════
+btnStop.addEventListener('click', async () => {
+  S.running = false;
+  btnStop.textContent = '⏳ Menyimpan...'; btnStop.disabled = true;
+  const elapsed = S.sessionStart ? Math.floor((Date.now()-S.sessionStart)/1000) : 0;
+  const total   = Math.max(S.frames, 1);
+  const payload = {
+    duration_sec  : elapsed, total_frames: S.frames,
+    focus_pct     : (S.focusF/total*100).toFixed(1),
+    distract_pct  : (S.distractF/total*100).toFixed(1),
+    noface_pct    : (S.nofaceF/total*100).toFixed(1),
+    total_alerts  : S.alerts, alert_log: S.alertLog,
+  };
+  try {
+    const res  = await fetch('/api/save_session', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    window.location.href = `/result/${data.session_id}`;
+  } catch(e) { window.location.href = '/'; }
+});
+
+init();
+</script>
+</body>
+</html>
